@@ -738,8 +738,8 @@ function Get-ModifiablePath {
 <#
 .SYNOPSIS
 
-Parses a passed string containing multiple possible file/folder paths and returns
-the file paths where the current user has modification rights.
+Parses a passed string containing multiple possible file/folder/registry paths and returns
+the file/registry paths where the current/provided user has modification rights.
 
 Author: Will Schroeder (@harmj0y)  
 License: BSD 3-Clause  
@@ -748,8 +748,8 @@ Contributor: Pavel Grishin (@grishinpv)
 
 .DESCRIPTION
 
-Takes a complex path specification of an initial file/folder path with possible
-configuration files, 'tokenizes' the string in a number of possible ways, and
+Takes a complex path specification of an initial file/folder/registry path with possible
+configuration files/keys, 'tokenizes' the string in a number of possible ways, and
 enumerates the ACLs for each path that currently exists on the system. Any path that
 the current user or provided user has modification rights on is returned in a custom object that contains
 the modifiable path, associated permission set, and the IdentityReference with the specified
@@ -764,7 +764,7 @@ The string path to parse for modifiable files. Required
 
 Switch. Treat all paths as literal (i.e. don't do 'tokenization').
 
-.PARAMETER Path
+.PARAMETER User
 
 The user name string in UPN format. Optional
 
@@ -788,7 +788,12 @@ C:\Vuln\config.ini         {ReadAttributes, ReadCo... NT AUTHORITY\Authentic...
 ...
 
 .EXAMPLE
+
 Get-ModifiablePath -Path c:\Program Files\*\*\test -User "user1@domain.com"
+
+.EXAMPLE
+
+Get-ModifiablePath -Path "HKCU:\SOFTWARE\*" -User "user1@domain.com"
 
 .OUTPUTS
 
@@ -810,7 +815,7 @@ a modifiable path.
         [Alias('LiteralPaths')]
         [Switch]
         $Literal,
-        
+
         [Alias('UserUPN')]
         [ValidateScript({ if ($_ -match "^[A-Za-z0-9_!#$%&'*+/=?`{|}~^.-]+@[A-Za-z0-9.-]+$") {$true} else {throw "The username '$_' has an invalid UPN format"}})]
         [String]
@@ -841,10 +846,13 @@ a modifiable path.
             [uint32]'0x00000002' = 'WriteData/AddFile'
             [uint32]'0x00000001' = 'ReadData/ListDirectory'
         }
-        
-        #expand checks for any user (user must be in UPN format)
+
         if ($User) {
-            $UserIdentity = [System.Security.Principal.WindowsIdentity]::new($User)
+            try {
+                $UserIdentity = [System.Security.Principal.WindowsIdentity]::new($User)
+            } catch {
+                throw $_
+            }
         } else {
             $UserIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
         }
@@ -915,9 +923,13 @@ a modifiable path.
                 $CandidatePath = $_
                 Get-Acl -Path $CandidatePath | Select-Object -ExpandProperty Access | Where-Object {($_.AccessControlType -match 'Allow')} | ForEach-Object {
 
-                    $FileSystemRights = $_.FileSystemRights.value__
+                    if ($_.GetType().Name -eq "RegistryAccessRule") {
+                        $SystemRights = $_.RegistryRights.value__
+                    } elseif ($_.GetType().Name -eq "FileSystemAccessRule") {
+                        $SystemRights = $_.FileSystemRights.value__
+                    }
 
-                    $Permissions = $AccessMask.Keys | Where-Object { $FileSystemRights -band $_ } | ForEach-Object { $AccessMask[$_] }
+                    $Permissions = $AccessMask.Keys | Where-Object { $SystemRights -band $_ } | ForEach-Object { $AccessMask[$_] }
 
                     # the set of permission types that allow for modification
                     $Comparison = Compare-Object -ReferenceObject $Permissions -DifferenceObject @('GenericWrite', 'GenericAll', 'MaximumAllowed', 'WriteOwner', 'WriteDAC', 'WriteData/AddFile', 'AppendData/AddSubdirectory') -IncludeEqual -ExcludeDifferent
