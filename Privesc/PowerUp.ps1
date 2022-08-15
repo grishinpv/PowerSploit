@@ -743,16 +743,17 @@ the file paths where the current user has modification rights.
 
 Author: Will Schroeder (@harmj0y)  
 License: BSD 3-Clause  
-Required Dependencies: None  
+Required Dependencies: None
+Contributor: Pavel Grishin (@grishinpv)
 
 .DESCRIPTION
 
 Takes a complex path specification of an initial file/folder path with possible
 configuration files, 'tokenizes' the string in a number of possible ways, and
 enumerates the ACLs for each path that currently exists on the system. Any path that
-the current user has modification rights on is returned in a custom object that contains
+the current user or provided user has modification rights on is returned in a custom object that contains
 the modifiable path, associated permission set, and the IdentityReference with the specified
-rights. The SID of the current user and any group he/she are a part of are used as the
+rights. The SID of the user and any group he/she are a part of are used as the
 comparison set against the parsed path DACLs.
 
 .PARAMETER Path
@@ -762,6 +763,10 @@ The string path to parse for modifiable files. Required
 .PARAMETER Literal
 
 Switch. Treat all paths as literal (i.e. don't do 'tokenization').
+
+.PARAMETER Path
+
+The user name string in UPN format. Optional
 
 .EXAMPLE
 
@@ -782,6 +787,9 @@ C:\Vuln\blah.bat           {ReadAttributes, ReadCo... NT AUTHORITY\Authentic...
 C:\Vuln\config.ini         {ReadAttributes, ReadCo... NT AUTHORITY\Authentic...
 ...
 
+.EXAMPLE
+Get-ModifiablePath -Path c:\Program Files\*\*\test -User "user1@domain.com"
+
 .OUTPUTS
 
 PowerUp.TokenPrivilege.ModifiablePath
@@ -801,7 +809,12 @@ a modifiable path.
 
         [Alias('LiteralPaths')]
         [Switch]
-        $Literal
+        $Literal,
+        
+        [Alias('UserUPN')]
+        [ValidateScript({ if ($_ -match "^[A-Za-z0-9_!#$%&'*+/=?`{|}~^.-]+@[A-Za-z0-9.-]+$") {$true} else {throw "The username '$_' has an invalid UPN format"}})]
+        [String]
+        $User
     )
 
     BEGIN {
@@ -828,8 +841,13 @@ a modifiable path.
             [uint32]'0x00000002' = 'WriteData/AddFile'
             [uint32]'0x00000001' = 'ReadData/ListDirectory'
         }
-
-        $UserIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        
+        #expand checks for any user (user must be in UPN format)
+        if ($User) {
+            $UserIdentity = [System.Security.Principal.WindowsIdentity]::new($User)
+        } else {
+            $UserIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+        }
         $CurrentUserSids = $UserIdentity.Groups | Select-Object -ExpandProperty Value
         $CurrentUserSids += $UserIdentity.User.Value
         $TranslatedIdentityReferences = @{}
